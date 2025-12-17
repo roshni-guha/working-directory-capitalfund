@@ -1,0 +1,231 @@
+\documentclass[12pt]{article}
+\usepackage{amsmath, amssymb}
+\usepackage{geometry}
+\usepackage{hyperref}
+\usepackage{graphicx}
+\usepackage{float}
+\geometry{margin=1in}
+
+\title{\textbf{Reinforcement Learning for Global Equity ETF Allocation}}
+\author{Roshni Guha}
+\date{\today}
+
+\begin{document}
+\maketitle
+
+\section{Motivation}
+This model develops a reinforcement learning (RL) framework to dynamically allocate exposure across global equity ETFs using macro and cross-asset signals.
+
+The central idea is that equity markets in different regions---such as the U.S. (SPY), Japan (EWJ), India (INDA), China (MCHI), and the Eurozone (EZU)---respond differently to global macro conditions. By learning patterns between commodities, interest rates, volatility, and regional equities, the model aims to improve risk-adjusted returns compared to static allocation or momentum-only strategies.
+
+\section{Implementation}
+\subsection{State Representation}
+The state vector \( s_t \) is an 18-dimensional feature vector constructed from 6 signal ETFs, each with 3 momentum windows:
+\[
+s_t =
+\begin{bmatrix}
+m_{10}^{(\text{TLT})}, m_{20}^{(\text{TLT})}, m_{60}^{(\text{TLT})},
+m_{10}^{(\text{GLD})}, m_{20}^{(\text{GLD})}, m_{60}^{(\text{GLD})}, \\
+m_{10}^{(\text{USO})}, m_{20}^{(\text{USO})}, m_{60}^{(\text{USO})},
+m_{10}^{(\text{SLV})}, m_{20}^{(\text{SLV})}, m_{60}^{(\text{SLV})}, \\
+m_{10}^{(\text{VIXY})}, m_{20}^{(\text{VIXY})}, m_{60}^{(\text{VIXY})},
+m_{10}^{(\text{IBIT})}, m_{20}^{(\text{IBIT})}, m_{60}^{(\text{IBIT})}
+\end{bmatrix}
+\]
+where \( m_k^{(i)} \) denotes the \( k \)-day momentum (10, 20, or 60 days) for signal ETF \( i \).
+
+\subsection{Action Space}
+The agent selects one ETF to hold (100\% allocation) at each timestep:
+\[
+a_t \in \{\text{SPY-US}, \text{EWJ-US}, \text{INDA-US}, \text{MCHI-US}, \text{EZU-US}, \text{BIL-US}\}
+\]
+
+\begin{itemize}
+    \item \textbf{SPY-US}: SPDR S\&P 500 (U.S. large-cap equities)
+    \item \textbf{EWJ-US}: iShares MSCI Japan (Japanese equities)
+    \item \textbf{INDA-US}: iShares MSCI India (Indian equities)
+    \item \textbf{MCHI-US}: iShares MSCI China (Chinese equities)
+    \item \textbf{EZU-US}: iShares MSCI Eurozone (Eurozone equities)
+    \item \textbf{BIL-US}: SPDR 1-3 Month T-Bill (cash equivalent)
+\end{itemize}
+
+\subsection{Reward Function}
+The reward balances returns against volatility:
+\[
+r_t = R_t - \lambda \cdot \sigma_t
+\]
+where \( R_t \) is the daily return from the chosen ETF, \( \sigma_t \) is recent volatility, and \( \lambda = 0.1 \) is the risk-aversion parameter.
+
+\subsection{Policy Network Architecture}
+The policy \( \pi_\theta(a|s) \) is a neural network with:
+\begin{itemize}
+    \item \textbf{Input layer}: 18 state features
+    \item \textbf{Hidden layers}: Two fully-connected layers (128 neurons each) with ReLU activation
+    \item \textbf{Output layer}: Softmax over 6 actions
+\end{itemize}
+
+The agent learns to maximize expected discounted reward:
+\[
+\pi^* = \arg\max_{\pi} \; \mathbb{E}_{\pi}\left[\sum_{t=1}^{T} \gamma^t r_t\right]
+\]
+where \( \gamma = 0.95 \) is the discount factor.
+
+\subsection{Training Algorithm: Proximal Policy Optimization}
+The model uses PPO with the following hyperparameters:
+\begin{itemize}
+    \item \textbf{Policy learning rate}: \( 3 \times 10^{-4} \)
+    \item \textbf{Value learning rate}: \( 1 \times 10^{-3} \)
+    \item \textbf{Clip parameter}: \( \epsilon = 0.2 \)
+    \item \textbf{GAE lambda}: \( \lambda = 0.95 \)
+    \item \textbf{Entropy coefficient}: \( 0.01 \) (for exploration)
+    \item \textbf{Gradient clipping}: Max norm of 0.5
+\end{itemize}
+
+\section{Interpretation}
+The model learns a \textbf{macro-aware rotation strategy}, dynamically allocating to regions based on:
+\begin{itemize}
+    \item U.S. equities (SPY-US) in stable or risk-on regimes
+    \item Exporters (EWJ-US, EZU-US) when commodity momentum is positive
+    \item Cash (BIL-US) during risk-off signals (rising TLT, VIXY)
+\end{itemize}
+
+\section{Validation Methodology}
+The model is validated using a train-test split:
+\begin{itemize}
+    \item \textbf{Training period}: 2004--2022 (5,457 days)
+    \item \textbf{Test period}: 2022--2025 (3 years, out-of-sample)
+\end{itemize}
+
+Performance is compared against an equal-weight baseline portfolio (16.67\% allocation to each of the 6 ETFs).
+
+\section{Results}
+
+\subsection{Training Performance}
+The agent was trained for 100 epochs on the training dataset (2004--2022). Figure~\ref{fig:training} shows the training metrics over time.
+
+\begin{figure}[H]
+\centering
+\includegraphics[width=0.9\textwidth]{Screenshot 2025-12-17 at 9.25.39 AM.png}
+\caption{Training metrics: average reward, policy loss, and value loss over 100 epochs.}
+\label{fig:training}
+\end{figure}
+
+\subsection{Backtest Performance Comparison}
+Figure~\ref{fig:comparison} compares the RL model against the equal-weight baseline on both training and test periods.
+
+\begin{figure}[H]
+\centering
+\includegraphics[width=0.9\textwidth]{Screenshot 2025-12-17 at 9.26.41 AM.png}
+\caption{Performance comparison: RL model vs. equal-weight baseline across training and test periods.}
+\label{fig:comparison}
+\end{figure}
+
+\subsection{Equity Curves}
+Figures~\ref{fig:equity1} and~\ref{fig:equity2} show the cumulative equity curves for both strategies.
+
+\begin{figure}[H]
+\centering
+\includegraphics[width=0.9\textwidth]{Screenshot 2025-12-17 at 9.27.16 AM.png}
+\caption{Equity curves showing cumulative returns for RL model and baseline.}
+\label{fig:equity1}
+\end{figure}
+
+\begin{figure}[H]
+\centering
+\includegraphics[width=0.9\textwidth]{Screenshot 2025-12-17 at 9.27.46 AM.png}
+\caption{Additional equity curve visualization with performance metrics.}
+\label{fig:equity2}
+\end{figure}
+
+\subsection{Key Findings}
+The RL model demonstrates:
+\begin{itemize}
+    \item Improved risk-adjusted returns compared to static equal-weight allocation
+    \item Adaptive behavior across different market regimes
+    \item Successful generalization to out-of-sample test period
+    \item Dynamic rotation between equity regions and cash based on macro signals
+\end{itemize}
+
+\section{How Reinforcement Learning Works}
+
+Reinforcement learning trains an agent through trial and error, similar to how one might learn chess by playing many games and discovering which strategies work.
+
+\subsection{The Learning Process}
+
+\subsubsection{Initialization}
+The agent starts with a neural network that assigns random probabilities to each action. Initially, it has no knowledge of financial markets.
+
+\subsubsection{Experience Collection}
+
+The agent simulates trading through historical data:
+\begin{enumerate}
+    \item \textbf{Observe} current market state (18 momentum features)
+    \item \textbf{Choose} an ETF based on current policy probabilities
+    \item \textbf{Receive} reward based on next-day return and volatility
+    \item \textbf{Record} the experience tuple: $(s_t, a_t, r_t, s_{t+1})$
+    \item \textbf{Repeat} for the entire historical dataset
+\end{enumerate}
+
+\subsubsection{Learning from Experience}
+
+After collecting experiences, the agent updates its neural network using PPO:
+\begin{itemize}
+    \item \textbf{Increase} probability of actions that led to high rewards
+    \item \textbf{Decrease} probability of actions that led to low rewards
+    \item Use gradient descent with the clipped PPO objective to prevent unstable updates
+\end{itemize}
+
+\textbf{Example}: If choosing BIL during VIXY spikes consistently yields positive rewards, while choosing SPY in the same conditions yields negative rewards, the network adjusts to favor BIL in those states.
+
+\subsubsection{Iteration}
+
+The process repeats for 100 epochs:
+\begin{enumerate}
+    \item Collect experiences by simulating trading
+    \item Update the policy using PPO
+    \item Simulate again with the improved policy
+\end{enumerate}
+
+After training, the agent learns patterns like:
+\begin{itemize}
+    \item Rising commodity momentum $\rightarrow$ favor EWJ-US, EZU-US
+    \item Rising volatility (VIXY) $\rightarrow$ rotate to BIL-US
+    \item Stable macro signals $\rightarrow$ favor SPY-US
+\end{itemize}
+
+\subsection{Key Mechanisms}
+
+\subsubsection{Exploration vs. Exploitation}
+
+The agent balances exploration (trying new strategies) with exploitation (using known strategies) through:
+\begin{itemize}
+    \item Sampling actions from the policy's probability distribution
+    \item Entropy regularization (coefficient 0.01) to encourage diverse action selection
+\end{itemize}
+
+\subsubsection{Credit Assignment}
+
+The discount factor $\gamma = 0.95$ ensures the agent values long-term consequences:
+\[
+\text{Total reward from day } t = r_t + \gamma r_{t+1} + \gamma^2 r_{t+2} + \ldots
+\]
+This means tomorrow's reward counts for 95\% as much as today's, ensuring focus on sustained performance rather than short-term gains.
+
+\subsection{PPO Algorithm Details}
+
+PPO updates the policy in four steps:
+\begin{enumerate}
+    \item \textbf{Collect trajectories}: Simulate trading for full dataset, recording $(s_t, a_t, r_t)$ tuples
+    \item \textbf{Compute advantages}: Calculate how much better each action was than expected using GAE
+    \item \textbf{Update policy}: Use clipped objective to prevent unstable updates:
+    \[
+    \text{maximize} \; \mathbb{E}_t \left[ \min\left(\frac{\pi_{\theta}(a_t|s_t)}{\pi_{\theta_{\text{old}}}(a_t|s_t)} A_t, \; \text{clip}\left(\frac{\pi_{\theta}(a_t|s_t)}{\pi_{\theta_{\text{old}}}(a_t|s_t)}, 0.8, 1.2\right) A_t\right) \right]
+    \]
+    \item \textbf{Repeat}: Iterate for 100 epochs
+\end{enumerate}
+
+PPO provides stability through clipping and sample efficiency through data reuse, making it well-suited for financial applications.
+
+
+
+\end{document}
