@@ -3,12 +3,13 @@
 \usepackage{geometry}
 \usepackage{hyperref}
 \usepackage{graphicx}
+\usepackage{grffile}
 \usepackage{float}
 \geometry{margin=1in}
 
 \title{\textbf{Reinforcement Learning for Global Equity ETF Allocation}}
 \author{Roshni Guha}
-\date{\today}
+\date{}
 
 \begin{document}
 \maketitle
@@ -20,7 +21,7 @@ The central idea is that equity markets in different regions---such as the U.S. 
 
 \section{Implementation}
 \subsection{State Representation}
-The state vector \( s_t \) is an 18-dimensional feature vector constructed from 6 signal ETFs, each with 3 momentum windows:
+The state vector \( s_t \) uses \textbf{macro and cross-asset signals} to inform global equity allocation decisions. It is an 18-dimensional feature vector constructed from 6 macro signal ETFs, each with 3 momentum windows:
 \[
 s_t =
 \begin{bmatrix}
@@ -33,6 +34,18 @@ m_{10}^{(\text{IBIT})}, m_{20}^{(\text{IBIT})}, m_{60}^{(\text{IBIT})}
 \end{bmatrix}
 \]
 where \( m_k^{(i)} \) denotes the \( k \)-day momentum (10, 20, or 60 days) for signal ETF \( i \).
+
+\textbf{Macro Signal ETFs:}
+\begin{itemize}
+    \item \textbf{TLT} (U.S. Treasury Bonds): Risk-off sentiment, interest rate regime
+    \item \textbf{GLD} (Gold): Inflation expectations, safe-haven demand
+    \item \textbf{USO} (Oil): Global growth proxy, commodity cycle
+    \item \textbf{SLV} (Silver): Industrial demand, commodity momentum
+    \item \textbf{VIXY} (VIX): Market volatility, fear gauge
+    \item \textbf{IBIT} (Bitcoin): Risk appetite, speculative sentiment
+\end{itemize}
+
+The agent learns which \textbf{global equity region} performs best given these macro conditions.
 
 \subsection{Action Space}
 The agent selects one ETF to hold (100\% allocation) at each timestep:
@@ -54,7 +67,7 @@ The reward balances returns against volatility:
 \[
 r_t = R_t - \lambda \cdot \sigma_t
 \]
-where \( R_t \) is the daily return from the chosen ETF, \( \sigma_t \) is recent volatility, and \( \lambda = 0.1 \) is the risk-aversion parameter.
+where \( R_t \) is the daily return from the chosen ETF, \( \sigma_t \) is recent volatility, and \( \lambda = 0.5 \) is the risk-aversion parameter.
 
 \subsection{Policy Network Architecture}
 The policy \( \pi_\theta(a|s) \) is a neural network with:
@@ -101,12 +114,12 @@ Performance is compared against an equal-weight baseline portfolio (16.67\% allo
 \section{Results}
 
 \subsection{Training Performance}
-The agent was trained for 100 epochs on the training dataset (2004--2022). Figure~\ref{fig:training} shows the training metrics over time.
+The agent was trained for 50 epochs on the training dataset (2004--2022). Figure~\ref{fig:training} shows the training metrics over time.
 
 \begin{figure}[H]
 \centering
-\includegraphics[width=0.9\textwidth]{Screenshot 2025-12-17 at 9.25.39 AM.png}
-\caption{Training metrics: average reward, policy loss, and value loss over 100 epochs.}
+\includegraphics[width=0.9\textwidth]{a.png}
+\caption{Training metrics: average reward, policy loss, and value loss over 50 epochs.}
 \label{fig:training}
 \end{figure}
 
@@ -115,26 +128,19 @@ Figure~\ref{fig:comparison} compares the RL model against the equal-weight basel
 
 \begin{figure}[H]
 \centering
-\includegraphics[width=0.9\textwidth]{Screenshot 2025-12-17 at 9.26.41 AM.png}
+\includegraphics[width=0.9\textwidth]{d.png}
 \caption{Performance comparison: RL model vs. equal-weight baseline across training and test periods.}
 \label{fig:comparison}
 \end{figure}
 
 \subsection{Equity Curves}
-Figures~\ref{fig:equity1} and~\ref{fig:equity2} show the cumulative equity curves for both strategies.
+Figure~\ref{fig:equity1} shows the cumulative equity curves for both strategies.
 
 \begin{figure}[H]
 \centering
-\includegraphics[width=0.9\textwidth]{Screenshot 2025-12-17 at 9.27.16 AM.png}
+\includegraphics[width=0.9\textwidth]{e.png}
 \caption{Equity curves showing cumulative returns for RL model and baseline.}
 \label{fig:equity1}
-\end{figure}
-
-\begin{figure}[H]
-\centering
-\includegraphics[width=0.9\textwidth]{Screenshot 2025-12-17 at 9.27.46 AM.png}
-\caption{Additional equity curve visualization with performance metrics.}
-\label{fig:equity2}
 \end{figure}
 
 \subsection{Key Findings}
@@ -221,7 +227,7 @@ PPO updates the policy in four steps:
     \[
     \text{maximize} \; \mathbb{E}_t \left[ \min\left(\frac{\pi_{\theta}(a_t|s_t)}{\pi_{\theta_{\text{old}}}(a_t|s_t)} A_t, \; \text{clip}\left(\frac{\pi_{\theta}(a_t|s_t)}{\pi_{\theta_{\text{old}}}(a_t|s_t)}, 0.8, 1.2\right) A_t\right) \right]
     \]
-    \item \textbf{Repeat}: Iterate for 100 epochs
+    \item \textbf{Repeat}: Iterate for 50 epochs
 \end{enumerate}
 
 PPO provides stability through clipping and sample efficiency through data reuse, making it well-suited for financial applications.
