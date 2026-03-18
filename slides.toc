@@ -1,0 +1,6 @@
+\beamer@sectionintoc {1}{Motivation}{3}{0}{1}
+\beamer@sectionintoc {2}{Blended Momentum Signal}{3}{0}{2}
+\beamer@sectionintoc {3}{Model Architecture}{3}{0}{3}
+\beamer@sectionintoc {4}{Training}{3}{0}{4}
+\beamer@sectionintoc {5}{Results}{3}{0}{5}
+\beamer@sectionintoc {6}{How It Works}{3}{0}{6}
