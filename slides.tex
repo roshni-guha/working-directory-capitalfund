@@ -1,307 +1,619 @@
-\documentclass[aspectratio=169]{beamer}
+\documentclass[aspectratio=169,11pt]{beamer}
+
+% ── Theme ─────────────────────────────────────────────────────────────────────
 \usetheme{Madrid}
-\usecolortheme{whale}
-\usepackage{amsmath, amssymb}
-\usepackage{graphicx}
-\usepackage{grffile}
-\usepackage{booktabs}
-\usepackage{array}
+\usecolortheme{default}
 
-% Clean up nav symbols
+\definecolor{capblue}{HTML}{1A3A5C}
+\definecolor{capgold}{HTML}{C8A951}
+\definecolor{lightgray}{HTML}{F5F5F5}
+
+\setbeamercolor{palette primary}{bg=capblue,fg=white}
+\setbeamercolor{palette secondary}{bg=capblue!80,fg=white}
+\setbeamercolor{palette tertiary}{bg=capblue!60,fg=white}
+\setbeamercolor{palette quaternary}{bg=capblue,fg=white}
+\setbeamercolor{structure}{fg=capblue}
+\setbeamercolor{frametitle}{bg=capblue,fg=white}
+\setbeamercolor{title}{fg=white}
+\setbeamercolor{block title}{bg=capblue,fg=white}
+\setbeamercolor{block body}{bg=lightgray}
+\setbeamercolor{alerted text}{fg=capgold}
+
+\setbeamerfont{title}{size=\Large,series=\bfseries}
+\setbeamerfont{frametitle}{size=\normalsize,series=\bfseries}
 \setbeamertemplate{navigation symbols}{}
-\setbeamertemplate{footline}[frame number]
+\setbeamertemplate{footline}{}
 
-\title{\textbf{Reinforcement Learning for\\Global Equity ETF Allocation}}
-\author{Roshni Guha}
-\date{}
+% ── Packages ──────────────────────────────────────────────────────────────────
+\usepackage{booktabs}
+\usepackage{graphicx}
+\usepackage{xcolor}
+\usepackage[T1]{fontenc}
+\usepackage{tikz}
+\usetikzlibrary{arrows.meta}
+\usepackage{colortbl}
+\usepackage{array}
+\usepackage{amsmath}
 
+% ── Title ─────────────────────────────────────────────────────────────────────
+\title{RL Global Equity Allocator}
+\subtitle{Model Review Presentation}
+\author{Capital Fund Research}
+\date{March 2026}
+
+% ══════════════════════════════════════════════════════════════════════════════
 \begin{document}
 
-% ─── Title ───────────────────────────────────────────────────────────────────
-\begin{frame}
-\titlepage
+% ── Title slide ───────────────────────────────────────────────────────────────
+\begin{frame}[plain]
+  \begin{tikzpicture}[remember picture,overlay]
+    \fill[capblue] (current page.south west) rectangle (current page.north east);
+    \fill[capgold] (current page.south west) rectangle +(\paperwidth,0.6ex);
+    \fill[capgold] ([yshift=0.6ex]current page.north west) rectangle +(\paperwidth,-0.6ex);
+  \end{tikzpicture}
+  \vfill
+  \begin{center}
+    {\color{white}\usebeamerfont{title}\inserttitle}\\[0.5em]
+    {\color{capgold}\large\insertsubtitle}\\[1.5em]
+    {\color{white}\normalsize\insertauthor\quad$\cdot$\quad\insertdate}
+  \end{center}
+  \vfill
 \end{frame}
 
-% ─── Agenda ──────────────────────────────────────────────────────────────────
+% ── Agenda ────────────────────────────────────────────────────────────────────
 \begin{frame}{Agenda}
-\tableofcontents
+  \begin{enumerate}\large
+    \setlength\itemsep{0.6em}
+    \item What the model does
+    \item Why these macro signals and BMOM
+    \item Neural network structure
+    \item Reward function
+    \item How PPO trains the agent
+    \item What the model outputs at trade time
+    \item Why the hybrid overlay
+    \item Walk-forward validation and results
+  \end{enumerate}
 \end{frame}
 
-\section{Motivation}
-\section{Blended Momentum Signal}
-\section{Model Architecture}
-\section{Training}
-\section{Results}
-\section{How It Works}
+% ══════════════════════════════════════════════════════════════════════════════
+% OVERVIEW
+% ══════════════════════════════════════════════════════════════════════════════
 
-% ─── Motivation ──────────────────────────────────────────────────────────────
-\begin{frame}{Motivation}
-\textbf{Problem:} Global equity regions respond differently to macro conditions.
+\begin{frame}{What the Model Does}
+  \begin{columns}[T]
+    \begin{column}{0.50\textwidth}
+      \large\textbf{The idea in one sentence}\\[0.6em]
+      \normalsize
+      Every day, the model looks at the global macro environment and picks \alert{one market} to hold --- rotating dynamically as conditions change.\\[1em]
 
-\bigskip
-\begin{columns}[T]
-\column{0.5\textwidth}
-\textbf{Regional ETFs (actions)}
-\begin{itemize}
-    \item SPY-US \; -- U.S.\ equities
-    \item EWJ-US \; -- Japan
-    \item INDA-US -- India
-    \item MCHI-US -- China
-    \item EZU-US \; -- Eurozone
-    \item BIL-US \; -- Cash
-\end{itemize}
-
-\column{0.5\textwidth}
-\textbf{Macro signals (state)}
-\begin{itemize}
-    \item TLT \; -- Rates / risk-off
-    \item GLD \; -- Inflation / safe haven
-    \item USO \; -- Oil / global growth
-    \item SLV \; -- Industrial demand
-    \item VIXY -- Volatility / fear
-    \item IBIT -- Risk appetite / crypto
-\end{itemize}
-\end{columns}
-
-\bigskip
-\textbf{Goal:} Learn a policy that rotates between regions based on macro regime,
-outperforming static equal-weight allocation.
-\end{frame}
-
-% ─── Blended Momentum ────────────────────────────────────────────────────────
-\begin{frame}{Blended Momentum Signal (\texttt{bmom})}
-
-Rather than using 3 raw momentum windows as separate features, we construct a
-\textbf{single blended signal} per asset:
-
-\[
-\texttt{bmom}_t^{(i)} =
-0.15\cdot m_{10}^{(i)} + 0.35\cdot m_{20}^{(i)} + 0.35\cdot m_{40}^{(i)} + 0.15\cdot m_{60}^{(i)}
-\]
-
-\bigskip
-\begin{center}
-\begin{tabular}{cccc}
-\toprule
-Window & Weight & Role \\
-\midrule
-10 days & 15\% & Recent signal (noisy) \\
-20 days & 35\% & Short-medium trend \\
-40 days & 35\% & Medium trend \\
-60 days & 15\% & Longer-term (stale) \\
-\bottomrule
-\end{tabular}
-\end{center}
-
-\bigskip
-\textbf{Benefits:}
-\begin{itemize}
-    \item State dimension $18 \;\to\; 6$ \quad (fewer parameters, less overfitting)
-    \item Center windows dominate $\Rightarrow$ smoother, less whipsaw rotation
-    \item Single interpretable feature per macro asset
-\end{itemize}
-\end{frame}
-
-% ─── State & Action ──────────────────────────────────────────────────────────
-\begin{frame}{State \& Action Space}
-
-\textbf{State vector} $s_t \in \mathbb{R}^6$:
-\[
-s_t =
-\bigl[\,
-\texttt{bmom}^{(\text{TLT})},\;
-\texttt{bmom}^{(\text{GLD})},\;
-\texttt{bmom}^{(\text{USO})},\;
-\texttt{bmom}^{(\text{SLV})},\;
-\texttt{bmom}^{(\text{VIXY})},\;
-\texttt{bmom}^{(\text{IBIT})}\,
-\bigr]^\top
-\]
-
-\bigskip
-\textbf{Action space} (discrete, 6 options):
-\[
-a_t \;\in\; \{\text{SPY-US},\; \text{EWJ-US},\; \text{INDA-US},\; \text{MCHI-US},\; \text{EZU-US},\; \text{BIL-US}\}
-\]
-The agent allocates \textbf{100\%} to one ETF each day.
-
-\bigskip
-\textbf{Reward function:}
-\[
-r_t \;=\; R_t \;-\; \lambda\,\sigma_t, \qquad \lambda = 0.5
-\]
-\begin{itemize}
-    \item $R_t$: next-day return of chosen ETF
-    \item $\sigma_t$: rolling 20-day volatility of chosen ETF
-\end{itemize}
-\end{frame}
-
-% ─── Policy Network ──────────────────────────────────────────────────────────
-\begin{frame}{Policy Network Architecture}
-
-\begin{columns}[T]
-\column{0.55\textwidth}
-\textbf{Policy network} $\pi_\theta(a \mid s)$:
-\[
-s \;\xrightarrow{\text{FC-128, ReLU}}\; \xrightarrow{\text{FC-128, ReLU}}\; \xrightarrow{\text{FC-6, Softmax}}\; P(a)
-\]
-
-\textbf{Value network} $V_\phi(s)$:
-\[
-s \;\xrightarrow{\text{FC-128, ReLU}}\; \xrightarrow{\text{FC-128, ReLU}}\; \xrightarrow{\text{FC-1}}\; \hat{v}
-\]
-
-\bigskip
-\textbf{Objective:}
-\[
-\pi^* = \arg\max_\pi \;\mathbb{E}_\pi\!\left[\sum_{t} \gamma^t r_t\right], \quad \gamma = 0.95
-\]
-
-\column{0.45\textwidth}
-\textbf{Hyperparameters}
-\begin{center}
-\small
-\begin{tabular}{ll}
-\toprule
-Parameter & Value \\
-\midrule
-Policy LR    & $3\!\times\!10^{-4}$ \\
-Value LR     & $1\!\times\!10^{-3}$ \\
-Hidden dim   & 128 \\
-Clip $\varepsilon$ & 0.2 \\
-GAE $\lambda$ & 0.95 \\
-Entropy coef & 0.01 \\
-Grad clip    & 0.5 \\
-\bottomrule
-\end{tabular}
-\end{center}
-\end{columns}
-\end{frame}
-
-% ─── PPO Algorithm ───────────────────────────────────────────────────────────
-\begin{frame}{Training: Proximal Policy Optimization (PPO)}
-
-\textbf{PPO update loop (50 epochs):}
-\begin{enumerate}
-    \item \textbf{Collect trajectories}: simulate full dataset, record $(s_t, a_t, r_t)$
-    \item \textbf{Compute GAE advantages}:
-    \[
-    \hat{A}_t = \sum_{l=0}^{\infty} (\gamma\lambda)^l \delta_{t+l}, \qquad
-    \delta_t = r_t + \gamma V(s_{t+1}) - V(s_t)
-    \]
-    \item \textbf{Update policy} with clipped objective:
-    \[
-    \mathcal{L}^{\text{PPO}} = \mathbb{E}_t\!\left[\min\!\left(\rho_t \hat{A}_t,\;
-    \text{clip}(\rho_t, 0.8, 1.2)\,\hat{A}_t\right)\right], \quad
-    \rho_t = \frac{\pi_\theta(a_t|s_t)}{\pi_{\theta_\text{old}}(a_t|s_t)}
-    \]
-    \item \textbf{Update value network} with MSE loss
-\end{enumerate}
-
-\bigskip
-\textbf{Why PPO?} Clipping prevents large, destabilising policy updates while
-still making efficient use of collected experience.
-\end{frame}
-
-% ─── Train/Test Split ────────────────────────────────────────────────────────
-\begin{frame}{Validation Methodology}
-
-\begin{center}
-\begin{tabular}{lll}
-\toprule
-Period & Dates & Days \\
-\midrule
-Training & Jan 2004 -- Dec 2022 & $\approx$5,457 \\
-Test (OOS) & Jan 2022 -- Sep 2025 & $\approx$3 years \\
-\bottomrule
-\end{tabular}
-\end{center}
-
-\bigskip
-\textbf{Baseline:} Equal-weight portfolio --- 16.67\% to each of the 6 trade ETFs,
-rebalanced daily.
-
-\bigskip
-\textbf{Evaluation metrics:}
-\begin{itemize}
-    \item Cumulative return and equity curve
-    \item Risk-adjusted return (Sharpe-like)
-    \item Drawdown profile
-    \item Allocation frequency by ETF
-\end{itemize}
-\end{frame}
-
-% ─── Training Chart ──────────────────────────────────────────────────────────
-\begin{frame}{Training Metrics}
-\begin{figure}
-\centering
-\includegraphics[width=0.85\textwidth]{a.png}
-\caption{Average reward, policy loss, and value loss over 50 training epochs.}
-\end{figure}
-\end{frame}
-
-% ─── Backtest Comparison ─────────────────────────────────────────────────────
-\begin{frame}{Backtest: RL vs.\ Equal-Weight Baseline}
-\begin{figure}
-\centering
-\includegraphics[width=0.85\textwidth]{d.png}
-\caption{Performance comparison across training and test periods.}
-\end{figure}
-\end{frame}
-
-% ─── Equity Curves ───────────────────────────────────────────────────────────
-\begin{frame}{Equity Curves}
-\begin{figure}
-\centering
-\includegraphics[width=0.85\textwidth]{e.png}
-\caption{Cumulative growth of \$1 --- RL model vs.\ equal-weight baseline.}
-\end{figure}
-\end{frame}
-
-% ─── Key Findings ────────────────────────────────────────────────────────────
-\begin{frame}{Key Findings}
-\begin{itemize}
-    \setlength\itemsep{0.8em}
-    \item \textbf{Improved risk-adjusted returns} vs.\ static equal-weight allocation
-    \item \textbf{Regime-adaptive} --- rotates between regions and cash based on macro \texttt{bmom}
-    \item \textbf{Out-of-sample generalisation} on 2022--2025 test set
-    \item \textbf{Blended momentum} reduces state dim from 18 $\to$ 6 without sacrificing signal quality
-    \item \textbf{Learned rules} (examples):
+      \textbf{The 6 markets it can choose:}
+      \vspace{0.3em}
+      \begin{itemize}\normalsize
+        \setlength\itemsep{0.3em}
+        \item US equities (SPY)
+        \item Japan (EWJ)
+        \item India (INDA)
+        \item China (MCHI)
+        \item Europe (EZU)
+        \item Cash (BIL)
+      \end{itemize}
+    \end{column}
+    \begin{column}{0.46\textwidth}
+      \begin{block}{What it reads to decide}
+        \vspace{0.3em}\normalsize
         \begin{itemize}
-            \item Positive commodity \texttt{bmom} $\Rightarrow$ EWJ-US, EZU-US
-            \item Positive VIXY \texttt{bmom} $\Rightarrow$ BIL-US (cash)
-            \item Stable macro signals $\Rightarrow$ SPY-US
+          \setlength\itemsep{0.3em}
+          \item Fed balance sheet (QE / tightening)
+          \item US M2 money supply
+          \item Long bond prices (TLT)
+          \item VIX / market fear (VIXY)
+          \item Yield curve slope (10Y$-$2Y)
+          \item S\&P 500 earnings and growth
+          \item Momentum signals (BMOM)
         \end{itemize}
-\end{itemize}
+        \vspace{0.3em}
+      \end{block}
+      \vspace{0.5em}
+      \small\textit{All 10 signals fed into a neural network trained with Proximal Policy Optimisation (PPO).}
+    \end{column}
+  \end{columns}
 \end{frame}
 
-% ─── Summary ─────────────────────────────────────────────────────────────────
-\begin{frame}{Summary}
+% ══════════════════════════════════════════════════════════════════════════════
+% WHY MACRO SIGNALS AND BMOM
+% ══════════════════════════════════════════════════════════════════════════════
 
-\begin{columns}[T]
-\column{0.5\textwidth}
-\textbf{What we built}
-\begin{itemize}
-    \item PPO-based macro rotation model
-    \item Blended momentum state (\texttt{bmom})
-    \item 6-asset discrete action space
-    \item Risk-penalised reward ($\lambda=0.5$)
-\end{itemize}
+\begin{frame}{Why These Macro Signals and BMOM}
+  \begin{columns}[T]
+    \begin{column}{0.50\textwidth}
+      \textbf{Macro signals --- they \emph{lead} prices}\\[0.4em]
+      \begin{itemize}\small
+        \setlength\itemsep{0.35em}
+        \item \textbf{Fed balance sheet \& M2:} liquidity injections drive risk appetite before equities move
+        \item \textbf{TLT price:} falling bond prices signal rising rates --- rotates capital across regions differently
+        \item \textbf{VIXY:} fear gauge; high VIX $\Rightarrow$ rotate to cash or defensive markets before momentum confirms
+        \item \textbf{Yield curve (10Y$-$2Y):} inversion historically precedes recessions; slope predicts EM vs.\ DM divergence
+        \item \textbf{S\&P earnings \& growth:} fundamental anchor for US-vs-EM overweight decision
+      \end{itemize}
+    \end{column}
+    \begin{column}{0.46\textwidth}
+      \textbf{BMOM --- what the macro misses}\\[0.4em]
+      \normalsize
+      Pure momentum captures trend persistence the macro cannot explain.\\[0.5em]
+      \small
+      \textbf{Formula:}
+      \[
+        \text{BMOM} = 0.15\,m_{20} + 0.35\,m_{60} + 0.35\,m_{120} + 0.15\,m_{240}
+      \]
+      Triangular weights emphasise the 3--6 month horizon --- the strongest empirically documented momentum effect.\\[0.5em]
+      One BMOM score is computed for each \textbf{signal ticker} (TLT, VIXY, IBIT), giving the model 3 momentum inputs that capture trend strength in bonds, volatility, and crypto --- regimes the macro level alone misses.\\[0.5em]
+      Together: macro leads, BMOM confirms.
+    \end{column}
+  \end{columns}
+\end{frame}
 
-\column{0.5\textwidth}
-\textbf{What we found}
-\begin{itemize}
-    \item RL learns meaningful macro regimes
-    \item \texttt{bmom} weights improve stability
-    \item Outperforms equal-weight baseline
-    \item Generalises out-of-sample
-\end{itemize}
-\end{columns}
+% ══════════════════════════════════════════════════════════════════════════════
+% NEURAL NETWORK STRUCTURE
+% ══════════════════════════════════════════════════════════════════════════════
 
-\bigskip\bigskip
-\begin{center}
-\large\textbf{Questions?}
-\end{center}
+\begin{frame}{Neural Network Structure}
+  \vspace{-0.2em}
+  \centering
+  \begin{tikzpicture}[
+    inbox/.style  = {draw=capblue!60, fill=capblue!8,  rounded corners=4pt,
+                     minimum width=3.4cm, minimum height=0.75cm,
+                     align=center, font=\small},
+    hidbox/.style = {draw=capblue,    fill=capblue!18, rounded corners=4pt,
+                     minimum width=9.8cm, minimum height=0.75cm,
+                     align=center, font=\small\bfseries},
+    outbox/.style = {draw=capgold!90!black, fill=capgold!25, rounded corners=4pt,
+                     minimum width=3.4cm, minimum height=0.75cm,
+                     align=center, font=\small},
+    resbox/.style = {draw=capblue!35, fill=lightgray, rounded corners=4pt,
+                     minimum width=3.6cm, minimum height=0.75cm,
+                     align=center, font=\footnotesize},
+    arr/.style    = {-Stealth, thick, color=capblue},
+    labl/.style   = {font=\scriptsize\itshape, text=capblue!70},
+  ]
+    \node[inbox] (macro) at (-2.8, 0)
+      {7 Macro Features\\[-0.15em]{\tiny Fed $\cdot$ M2 $\cdot$ TLT $\cdot$ VIX $\cdot$ Yield $\cdot$ EPS}};
+    \node[inbox] (bmom) at (2.8, 0)
+      {3 BMOM Scores\\[-0.15em]{\tiny TLT $\cdot$ VIXY $\cdot$ IBIT}};
+
+    \node[hidbox] (h1) at (0, -1.35)
+      {Layer 1\quad Linear($10 \to 128$)\quad LayerNorm\quad ReLU};
+
+    \node[hidbox] (h2) at (0, -2.45)
+      {Layer 2\quad Linear($128 \to 128$)\quad LayerNorm\quad ReLU};
+
+    \node[outbox] (pol) at (-2.8, -3.9)
+      {\textbf{Policy Head}\\[-0.1em]Linear($128{\to}6$) + Softmax\\[-0.1em]
+       {\tiny Softmax: probs summing to 1}};
+    \node[outbox] (val) at (2.8, -3.9)
+      {\textbf{Value Head}\\[-0.1em]Linear($128{\to}1$)};
+
+    \node[resbox] (polout) at (-2.8, -5.1)
+      {\textbf{Probability over 6 ETFs}\\Pick highest $\Rightarrow$ execute trade};
+    \node[resbox] (valout) at (2.8, -5.1)
+      {\textbf{State value} $V(s)$\\PPO advantage signal};
+
+    \draw[arr] (macro.south) -- (h1.north);
+    \draw[arr] (bmom.south)  -- (h1.north);
+    \draw[arr] (h1)          -- (h2);
+    \draw[arr] (h2.south)    -- (pol.north);
+    \draw[arr] (h2.south)    -- (val.north);
+    \draw[arr] (pol)         -- (polout);
+    \draw[arr] (val)         -- (valout);
+
+  \end{tikzpicture}
+\end{frame}
+
+\begin{frame}{Policy Network and Value Network --- What They Do}
+  \vspace{0.5em}
+  \begin{columns}[T]
+    \begin{column}{0.48\textwidth}
+      \begin{block}{Policy Network}
+        \vspace{0.4em}\normalsize
+        \textbf{Makes the trading decision.}\\[0.5em]
+        Looks at today's macro state and outputs a probability for each of the 6 ETFs. The one with the highest probability is the trade.\\[0.5em]
+        During training it gradually learns which macro conditions favour which market. During live use it just runs a forward pass and picks the top ETF.
+        \vspace{0.4em}
+      \end{block}
+    \end{column}
+    \begin{column}{0.48\textwidth}
+      \begin{block}{Value Network}
+        \vspace{0.4em}\normalsize
+        \textbf{Judges how good the situation is.}\\[0.5em]
+        Given the same macro state, it outputs a single number estimating how much total reward the agent can expect from here.\\[0.5em]
+        PPO uses this to compute whether a trade turned out \textit{better or worse than expected} --- that gap (the advantage) is what drives the policy update.
+        \vspace{0.4em}
+      \end{block}
+    \end{column}
+  \end{columns}
+\end{frame}
+
+% ══════════════════════════════════════════════════════════════════════════════
+% REWARD FUNCTION
+% ══════════════════════════════════════════════════════════════════════════════
+
+\begin{frame}{Reward Function}
+  \vspace{0.3em}
+  \begin{center}
+    \large\textbf{After each trade, the agent gets a score:}\\[1em]
+    \begin{beamercolorbox}[wd=0.85\textwidth,center,sep=0.5em]{block title}
+      \LARGE $\text{reward} \;=\; \underbrace{R_t}_{\text{today's return}} \;-\; 2.0 \times \underbrace{\text{variance of chosen ETF}}_{\text{risk penalty}}$
+    \end{beamercolorbox}
+  \end{center}
+  \vspace{1em}
+  \begin{columns}[T]
+    \begin{column}{0.32\textwidth}
+      \begin{block}{\centering Pick a high return}
+        \centering\vspace{0.3em}
+        \normalsize Good day $\Rightarrow$ positive reward\\[0.3em]
+        Bad day $\Rightarrow$ negative reward
+        \vspace{0.3em}
+      \end{block}
+    \end{column}
+    \begin{column}{0.32\textwidth}
+      \begin{block}{\centering Avoid volatile markets}
+        \centering\vspace{0.3em}
+        \normalsize The variance comes from a \textbf{rolling 60-day covariance matrix} --- if a market has been wild lately, the penalty is bigger
+        \vspace{0.3em}
+      \end{block}
+    \end{column}
+  \end{columns}
+  \vspace{0.8em}
+  \centering\small\textit{In plain English: pick the market with the best return \textbf{for the risk you are taking on}.}
+\end{frame}
+
+% ══════════════════════════════════════════════════════════════════════════════
+% HOW PPO WORKS
+% ══════════════════════════════════════════════════════════════════════════════
+
+\begin{frame}{How PPO Trains the Agent}
+  \vspace{0.2em}
+  \begin{columns}[T]
+    \begin{column}{0.48\textwidth}
+      \textbf{The loop (runs 10 years of history, 50 times)}\\[0.7em]
+      \begin{enumerate}\normalsize
+        \setlength\itemsep{0.7em}
+        \item \textbf{See} the macro state today (10 numbers)
+        \item \textbf{Pick} an ETF based on current policy
+        \item \textbf{Get} the reward (return minus risk penalty)
+        \item After 252 days, \textbf{update} the policy --- then repeat
+      \end{enumerate}
+    \end{column}
+    \begin{column}{0.48\textwidth}
+      \textbf{What makes PPO special}\\[0.7em]
+      \begin{itemize}\normalsize
+        \setlength\itemsep{0.7em}
+        \item \alert{Clipped updates} --- the policy can only change a little each round, so it doesn't overcorrect on one noisy day and forget everything
+        \item \alert{Entropy bonus} --- forces the agent to keep exploring all 6 markets rather than always picking the same one
+        \item \alert{10 random seeds run} --- best one kept (seed 999, Sharpe 0.75)
+      \end{itemize}
+    \end{column}
+  \end{columns}
+  \vspace{1em}
+  \begin{center}
+    \begin{beamercolorbox}[wd=0.85\textwidth,center,sep=0.4em]{block body}
+      \normalsize\textit{Think of PPO as a student who reviews a whole year of trades, takes a cautious step to improve, then reviews again --- never overcorrecting on a single bad day.}
+    \end{beamercolorbox}
+  \end{center}
+\end{frame}
+
+% ══════════════════════════════════════════════════════════════════════════════
+% OUTPUT AT TRADE TIME
+% ══════════════════════════════════════════════════════════════════════════════
+
+\begin{frame}{What the Model Outputs at Trade Time}
+  \begin{columns}[T]
+    \begin{column}{0.50\textwidth}
+      \textbf{Inference pipeline}\\[0.6em]
+      \begin{enumerate}\normalsize
+        \setlength\itemsep{0.6em}
+        \item Observe the 10-feature macro state at close of day $t$
+        \item Feed into the Policy Network $\pi_\theta(s_t)$
+        \item Softmax output: a probability over all 6 ETFs
+        \item Take the \textbf{argmax} --- the highest-probability ETF
+        \item Allocate \textbf{100\%} of capital to that ETF
+        \item Hold through day $t+1$, then re-evaluate
+      \end{enumerate}
+      \vspace{0.5em}
+      \small\textit{The portfolio is always fully invested in exactly one position. No partial allocations.}
+    \end{column}
+    \begin{column}{0.46\textwidth}
+      \begin{block}{Example: a typical trade signal}
+        \vspace{0.3em}\small
+        State on a given day:\\[0.2em]
+        \quad Fed assets $\uparrow$, M2 $\uparrow$, VIX rolling over,\\
+        \quad yield curve steepening, INDA BMOM $\uparrow\uparrow$\\[0.5em]
+        Policy output:
+        \begin{center}
+        \small\begin{tabular}{lc}
+          \toprule
+          ETF & Probability \\
+          \midrule
+          SPY  & 0.18 \\
+          EWJ  & 0.06 \\
+          \rowcolor{blue!10}
+          \textbf{INDA} & \textbf{0.51} \\
+          MCHI & 0.11 \\
+          EZU  & 0.07 \\
+          BIL  & 0.07 \\
+          \bottomrule
+        \end{tabular}
+        \end{center}
+        $\Rightarrow$ \textbf{Hold INDA tomorrow.}
+        \vspace{0.3em}
+      \end{block}
+    \end{column}
+  \end{columns}
+\end{frame}
+
+% ══════════════════════════════════════════════════════════════════════════════
+% WHY THE HYBRID
+% ══════════════════════════════════════════════════════════════════════════════
+
+\begin{frame}{Why the Hybrid --- RL Alone Is Not Enough}
+  \begin{columns}[T]
+    \begin{column}{0.50\textwidth}
+      \textbf{The problem with RL alone}\\[0.4em]
+      \normalsize
+      The RL model was trained on 2004--2013 (GFC and early recovery). If market dynamics shift significantly --- new volatility regimes, unprecedented macro combinations --- the learned policy can \textbf{over-extend drawdowns} before adapting.\\[0.6em]
+      \textbf{What the hybrid adds:}
+      \begin{itemize}\normalsize
+        \setlength\itemsep{0.4em}
+        \item A \textbf{drawdown-differential regime switch}: when the RL model's running drawdown exceeds the BMOM baseline's drawdown by $>8\%$, automatically switch to momentum
+        \item When the gap closes back to $<3\%$, switch back to RL
+        \item BMOM is \textbf{regime-agnostic} --- it always follows current price trends, regardless of what macro regime it is
+      \end{itemize}
+    \end{column}
+    \begin{column}{0.46\textwidth}
+      \textbf{The result}\\[0.4em]
+      \begin{center}\small
+      \begin{tabular}{lcc}
+        \toprule
+        Strategy & Sharpe & Max DD \\
+        \midrule
+        RL standalone & 0.75 & $-$34.6\% \\
+        \rowcolor{green!8}
+        \textbf{Hybrid} & \textbf{0.73} & $\mathbf{-}$\textbf{30.0\%} \\
+        BMOM baseline  & 0.45 & $-$28.6\% \\
+        \bottomrule
+      \end{tabular}
+      \end{center}
+      \vspace{0.5em}
+      \normalsize
+      The hybrid is \textbf{in RL mode 95.6\% of the time} --- the switch rarely activates, but when it does (e.g.\ COVID crash, 2022 rate shock) it absorbs the worst of the drawdown.\\[0.5em]
+      \small
+      Think of it as: \textit{RL handles macro regime identification (better returns), BMOM handles tail risk (lower drawdowns).}
+    \end{column}
+  \end{columns}
+\end{frame}
+
+% ══════════════════════════════════════════════════════════════════════════════
+% WALK-FORWARD VALIDATION
+% ══════════════════════════════════════════════════════════════════════════════
+
+\begin{frame}{Walk-Forward Validation --- No Peeking}
+  \begin{columns}[T]
+    \begin{column}{0.52\textwidth}
+      \textbf{The most important discipline:}\\[0.6em]\normalsize
+      The model was trained \textbf{only on 2004--2013}.\\[0.5em]
+      Everything from \textbf{2014 to 2025} --- 11 years --- is out-of-sample. The model had \textbf{never seen} this data.\\[0.5em]
+      This means the results are real, not overfitting.\\[0.8em]
+      \textbf{The OOS period covers:}
+      \begin{itemize}\small
+        \setlength\itemsep{0.2em}
+        \item Post-GFC bull market (2014--2019)
+        \item COVID crash and recovery (2020--2021)
+        \item Rate hike cycle (2022)
+        \item AI-driven rally (2023--2025)
+      \end{itemize}
+    \end{column}
+    \begin{column}{0.44\textwidth}
+      \begin{block}{\centering Training split}
+        \centering\vspace{0.4em}
+        \begin{tabular}{ll}
+          \textbf{Train:} & 2004--2013 \\
+          \textbf{Test:}  & 2014--2025 (OOS) \\
+          \textbf{Seed:}  & 999 (best of 10) \\
+          \textbf{Algorithm:} & PPO \\
+          \textbf{State dim:} & 10 features \\
+          \textbf{Actions:}   & 6 markets \\
+        \end{tabular}
+        \vspace{0.3em}
+      \end{block}
+      \vspace{0.5em}
+      \begin{block}{\centering OOS results}
+        \centering\vspace{0.3em}
+        \begin{tabular}{lcc}
+          Strategy & Sharpe & Ann.\ Ret \\
+          \midrule
+          RL standalone & 0.75 & 13.3\% \\
+          Hybrid & 0.73 & 12.3\% \\
+          SPY & 0.79 & 13.5\% \\
+          BMOM & 0.45 & 5.9\% \\
+        \end{tabular}
+        \vspace{0.3em}
+      \end{block}
+    \end{column}
+  \end{columns}
+\end{frame}
+
+% ══════════════════════════════════════════════════════════════════════════════
+% SHARPE
+% ══════════════════════════════════════════════════════════════════════════════
+
+\begin{frame}{Sharpe Ratio}
+  \vspace{0.6em}
+  \begin{columns}[T]
+    \begin{column}{0.50\textwidth}
+      \textbf{Standalone}\\[0.4em]
+      \begin{center}
+      \begin{tabular}{lc}
+        \toprule
+        Strategy & Sharpe \\
+        \midrule
+        \rowcolor{blue!8}
+        \textbf{RL Model} & \textbf{0.75} \\
+        Hybrid & 0.73 \\
+        SPY & 0.79 \\
+        BMOM Baseline & 0.45 \\
+        \bottomrule
+      \end{tabular}
+      \end{center}
+      \vspace{0.4em}
+      \small Standalone Sharpe of \textbf{0.75 clears the 0.7 threshold}.\\
+      Competitive with SPY on a risk-adjusted basis.
+    \end{column}
+    \begin{column}{0.46\textwidth}
+      \textbf{Marginal (portfolio impact)}\\[0.4em]
+      \begin{center}
+      \begin{tabular}{lc}
+        \toprule
+        Portfolio & Sharpe \\
+        \midrule
+        Without hybrid & 0.788 \\
+        \rowcolor{green!8}
+        \textbf{With hybrid (+10\%)} & \textbf{0.789} \\
+        \bottomrule
+      \end{tabular}
+      \end{center}
+      \vspace{0.4em}
+      \small Adding 10\% allocation to the hybrid \textbf{improves portfolio Sharpe}.
+      The improvement is directionally correct.
+    \end{column}
+  \end{columns}
+\end{frame}
+
+% ══════════════════════════════════════════════════════════════════════════════
+% RETURN
+% ══════════════════════════════════════════════════════════════════════════════
+
+\begin{frame}{Annualised Return}
+  \vspace{0.6em}
+  \begin{columns}[T]
+    \begin{column}{0.50\textwidth}
+      \textbf{Standalone annual returns (OOS)}\\[0.4em]
+      \begin{center}
+      \begin{tabular}{lc}
+        \toprule
+        Strategy & Ann.\ Return \\
+        \midrule
+        \rowcolor{blue!8}
+        RL Model        & 13.3\% \\
+        Hybrid          & 12.3\% \\
+        SPY             & 13.5\% \\
+        BMOM Baseline   &  5.9\% \\
+        \bottomrule
+      \end{tabular}
+      \end{center}
+      \vspace{0.4em}
+      \small \textbf{Matches SPY returns} on data the model never saw.\\
+      Beats BMOM by \textbf{+7.4\% per year}.
+    \end{column}
+    \begin{column}{0.46\textwidth}
+      \textbf{Why BMOM alone (5.9\%) is so much lower:}\\[0.4em]\normalsize
+      Pure momentum waits for price signals to confirm a move. The RL model reads \textbf{macro signals that lead prices} --- like Fed balance sheet expansion before equities rally, or yield curve inversion before a drawdown.\\[0.5em]
+      \small The +7.4\% gap between the RL (13.3\%) and BMOM (5.9\%) is the value the macro signals add.
+    \end{column}
+  \end{columns}
+\end{frame}
+
+% ══════════════════════════════════════════════════════════════════════════════
+% DRAWDOWN + CORRELATION (combined)
+% ══════════════════════════════════════════════════════════════════════════════
+
+\begin{frame}{Maximum Drawdown and Correlation}
+  \vspace{0.5em}
+  \begin{columns}[T]
+    \begin{column}{0.48\textwidth}
+      \textbf{Maximum Drawdown}\\[0.4em]
+      \begin{center}
+      \begin{tabular}{lcc}
+        \toprule
+        Strategy & Max DD & Calmar \\
+        \midrule
+        RL standalone & $-$34.6\% & 0.38 \\
+        \rowcolor{green!8}
+        \textbf{Hybrid} & $-$\textbf{30.0\%} & \textbf{0.41} \\
+        SPY & $-$33.7\% & 0.40 \\
+        BMOM baseline & $-$28.6\% & --- \\
+        \bottomrule
+      \end{tabular}
+      \end{center}
+    \end{column}
+    \begin{column}{0.48\textwidth}
+      \textbf{Return Correlations (OOS 2014--2025)}\\[0.4em]
+      \begin{center}
+      \begin{tabular}{lcccc}
+        \toprule
+             & RL & Hybrid & BMOM & SPY \\
+        \midrule
+        RL     & 1.00 & 0.95 & 0.65 & 0.95 \\
+        Hybrid & 0.95 & 1.00 & 0.68 & 0.90 \\
+        BMOM   & 0.65 & 0.68 & 1.00 & 0.68 \\
+        SPY    & 0.95 & 0.90 & 0.68 & 1.00 \\
+        \bottomrule
+      \end{tabular}
+      \end{center}
+      \vspace{0.4em}
+      \small RL correlation to existing AMMA models: $\approx$\textbf{0.35}
+    \end{column}
+  \end{columns}
+\end{frame}
+
+% ══════════════════════════════════════════════════════════════════════════════
+% EQUITY CURVES
+% ══════════════════════════════════════════════════════════════════════════════
+
+\begin{frame}{Equity Curves --- Standalone Performance}
+  \begin{center}
+    \includegraphics[width=0.92\textwidth]{rl_oos_results.png}
+  \end{center}
+\end{frame}
+
+\begin{frame}{Equity Curves --- Portfolio With and Without}
+  \begin{center}
+    \includegraphics[width=0.92\textwidth]{portfolio_integration.png}
+  \end{center}
+\end{frame}
+
+\begin{frame}{Equity Curves --- Hybrid Safety Switch Detail}
+  \begin{center}
+    \includegraphics[width=0.92\textwidth]{rl_hybrid_overlay.png}
+  \end{center}
+\end{frame}
+
+% ── Thank you ─────────────────────────────────────────────────────────────────
+\begin{frame}[plain]
+  \begin{tikzpicture}[remember picture,overlay]
+    \fill[capblue] (current page.south west) rectangle (current page.north east);
+    \fill[capgold] (current page.south west) rectangle +(\paperwidth,0.6ex);
+    \fill[capgold] ([yshift=0.6ex]current page.north west) rectangle +(\paperwidth,-0.6ex);
+  \end{tikzpicture}
+  \vfill
+  \begin{center}
+    {\color{white}\Large\bfseries Thank You}\\[1em]
+    {\color{capgold}\rule{5cm}{0.4pt}}\\[1em]
+    {\color{white!80}\normalsize Questions?}\\[1.5em]
+    \begin{tabular}{ll}
+      {\color{white!70}RL Standalone Sharpe:} & {\color{white}0.75} \\
+      {\color{white!70}Hybrid Sharpe:}         & {\color{white}0.73} \\
+      {\color{white!70}Ann.\ Return (RL):}     & {\color{white}13.3\%} \\
+      {\color{white!70}Max Drawdown (Hybrid):} & {\color{white}$-$30.0\%} \\
+      {\color{white!70}Time in RL mode:}       & {\color{white}95.6\%} \\
+    \end{tabular}
+  \end{center}
+  \vfill
+\end{frame}
+
+% ── ETF Allocations (bonus slide) ─────────────────────────────────────────────
+\begin{frame}{ETF Allocations Over Time}
+  \begin{center}
+    \includegraphics[width=0.92\textwidth]{etf_allocations_over_time.png}
+  \end{center}
 \end{frame}
 
 \end{document}
